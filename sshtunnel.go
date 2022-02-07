@@ -12,8 +12,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/agent"
 	"io"
 	"net"
 	"os"
@@ -22,6 +20,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 type Endpoint struct {
@@ -183,11 +184,6 @@ func passwordCallback() (string, error) {
 	fmt.Println("Enter ssh password:")
 	pwd := readPasswd()
 	return pwd, nil
-}
-
-func hostKeyCallback(hostname string, remote net.Addr, key ssh.PublicKey) error {
-	Trace.Printf("host: %s", hostname)
-	return nil
 }
 
 func NewSSHTunnel(sshUser string, sshHost string, sshPort int, localPort int,

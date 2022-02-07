@@ -4,14 +4,22 @@
  * of the MIT license.  See the LICENSE file for details.
  */
 
-package main
+package configuration
 
 import (
 	"encoding/json"
-	"github.com/urfave/cli"
 	"io/ioutil"
+	"log"
 	"os"
 	"runtime"
+
+	"github.com/urfave/cli"
+)
+
+var (
+	Trace *log.Logger
+	Info  *log.Logger
+	Error *log.Logger
 )
 
 type SearchTarget struct {
@@ -37,9 +45,9 @@ type Configuration struct {
 	Follow          bool `json:"-"`
 	User            string
 	Password        string
-	Verbose         bool   `json:"-"`
-	MoreVerbose     bool   `json:"-"`
-	TraceRequests   bool   `json:"-"`
+	Verbose         bool `json:"-"`
+	MoreVerbose     bool `json:"-"`
+	TraceRequests   bool `json:"-"`
 	SSHTunnelParams string
 	SaveQuery       bool `json:"-"`
 }

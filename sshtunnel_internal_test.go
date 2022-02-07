@@ -6,7 +6,7 @@
 package main
 
 import (
-	"github.com/bonovoxly/elktail/testutils"
+	"github.com/piersharding/elktail/testutils"
 	"os"
 	"testing"
 )

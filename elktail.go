@@ -10,10 +10,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"github.com/urfave/cli"
-	"golang.org/x/crypto/ssh/terminal"
-	"golang.org/x/net/context"
-	"gopkg.in/olivere/elastic.v6"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -21,18 +17,24 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/olivere/elastic/v7"
+	configuration "github.com/piersharding/elktail/configuration"
+	"github.com/urfave/cli"
+	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/net/context"
 )
 
 //
 // Tail is a structure that holds data necessary to perform tailing.
 //
 type Tail struct {
-	client          *elastic.Client  //elastic search client that we'll use to contact EL
-	queryDefinition *QueryDefinition //structure containing query definition and formatting
-	indices         []string         //indices to search through
-	lastTimeStamp   string           //timestamp of the last result
-	lastIDs         []displayedEntry //result IDs that we fetched in the last query, used to avoid duplicates when using tailing query time window
-	order           bool             //search order - true = ascending (may be reversed in case date-after filtering)
+	client          *elastic.Client                //elastic search client that we'll use to contact EL
+	queryDefinition *configuration.QueryDefinition //structure containing query definition and formatting
+	indices         []string                       //indices to search through
+	lastTimeStamp   string                         //timestamp of the last result
+	lastIDs         []displayedEntry               //result IDs that we fetched in the last query, used to avoid duplicates when using tailing query time window
+	order           bool                           //search order - true = ascending (may be reversed in case date-after filtering)
 }
 
 type displayedEntry struct {
@@ -49,7 +51,7 @@ const dateFormatFull = "2006-01-02T15:04:05.999Z07:00"
 const tailingTimeWindow = 500
 
 // NewTail creates a new Tailer using configuration
-func NewTail(configuration *Configuration) *Tail {
+func NewTail(configuration *configuration.Configuration) *Tail {
 	tail := new(Tail)
 
 	var client *elastic.Client
@@ -145,8 +147,8 @@ func NewTail(configuration *Configuration) *Tail {
 
 // Selects appropriate indices in EL based on configuration. This basically means that if query is date filtered,
 // then it attempts to select indices in the filtered date range, otherwise it selects the last index.
-func (tail *Tail) selectIndices(configuration *Configuration) {
-	result, err := tail.client.CatIndices().Do(context.TODO())
+func (tail *Tail) selectIndices(configuration *configuration.Configuration) {
+	indices, err := tail.client.IndexNames()
 	if err != nil {
 		Info.Println("Could not fetch available indices. Using pattern instead.", err)
 		tail.indices = []string{configuration.SearchTarget.IndexPattern}
@@ -209,7 +211,7 @@ func (tail *Tail) Start(follow bool, initialEntries int) {
 				result = multiResult.Responses[0]
 				err = nil
 			} else {
-				result =  nil
+				result = nil
 				err = e
 			}
 
@@ -252,7 +254,7 @@ func (tail *Tail) initialSearch(initialEntries int) (*elastic.SearchResult, erro
 
 // Process the results (e.g. prints them out based on configured format)
 func (tail *Tail) processResults(searchResult *elastic.SearchResult) {
-	Trace.Printf("Fetched page of %d results out of %d total.\n", len(searchResult.Hits.Hits), searchResult.Hits.TotalHits)
+	Trace.Printf("Fetched page of %d results out of %d total.\n", len(searchResult.Hits.Hits), searchResult.TotalHits())
 	hits := searchResult.Hits.Hits
 
 	// We need to track last N entries that had the timestamp newer than cutoff timestamp. This is done to
@@ -310,7 +312,7 @@ func drainOldEntries(entries *[]displayedEntry, cutOffTimestamp string) {
 
 func (tail *Tail) processHit(hit *elastic.SearchHit) map[string]interface{} {
 	var entry map[string]interface{}
-	err := json.Unmarshal(*hit.Source, &entry)
+	err := json.Unmarshal(hit.Source, &entry)
 	if err != nil {
 		Error.Fatalln("Failed parsing ElasticSearch response.", err)
 	}
@@ -425,7 +427,7 @@ func findLastIndex(indices []string, indexPattern string) string {
 
 func main() {
 
-	config := new(Configuration)
+	config := new(configuration.Configuration)
 	app := cli.NewApp()
 	app.Name = "elktail"
 	app.Usage = "utility for tailing Logstash logs stored in ElasticSearch"
@@ -447,8 +449,8 @@ func main() {
 		} else {
 			InitLogging(ioutil.Discard, ioutil.Discard, os.Stderr, false)
 		}
-		if !IsConfigRelevantFlagSet(c) {
-			loadedConfig, err := LoadDefault()
+		if !configuration.IsConfigRelevantFlagSet(c) {
+			loadedConfig, err := configuration.LoadDefault()
 			if err != nil {
 				Info.Printf("Failed to find or open previous default configuration: %s\n", err)
 			} else {
@@ -499,7 +501,7 @@ func main() {
 			time.Sleep(1 * time.Second)
 		}
 
-		var configToSave *Configuration
+		var configToSave *configuration.Configuration
 
 		args := c.Args()
 
@@ -592,11 +594,11 @@ func EvaluateExpression(model interface{}, fieldExpression string) (string, erro
 }
 
 type KibanaDecorator struct {
-	r http.RoundTripper
+	r             http.RoundTripper
 	kibanaVersion string
-	extraHeaders map[string]string
+	extraHeaders  map[string]string
 	configuration *Configuration
-	cookie AuthToken
+	cookie        AuthToken
 }
 
 func (mrt KibanaDecorator) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -612,7 +614,7 @@ func (mrt KibanaDecorator) RoundTrip(r *http.Request) (*http.Response, error) {
 		if mrt.cookie.token != "" {
 			r.AddCookie(&http.Cookie{
 				//HttpOnly: true,
-				Name: "sid-auth",
+				Name:  "sid-auth",
 				Value: mrt.cookie.token,
 			})
 		}
@@ -638,7 +640,7 @@ func (mrt KibanaDecorator) RoundTrip(r *http.Request) (*http.Response, error) {
 
 type AuthToken struct {
 	config *Configuration
-	token string
+	token  string
 }
 
 func LoadToken(config *Configuration) AuthToken {
@@ -653,8 +655,8 @@ func LoadToken(config *Configuration) AuthToken {
 	}
 
 	return AuthToken{
-		config:config,
-		token: string(tokenBytes),
+		config: config,
+		token:  string(tokenBytes),
 	}
 }
 
