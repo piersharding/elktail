@@ -1,4 +1,4 @@
-module github.com/knes1/elktail
+module github.com/piersharding/elktail
 
 go 1.17
 

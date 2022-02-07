@@ -43,6 +43,7 @@ type Configuration struct {
 	QueryDefinition QueryDefinition
 	InitialEntries  int
 	Follow          bool `json:"-"`
+	Raw             bool `json:"-"`
 	User            string
 	Password        string
 	Verbose         bool `json:"-"`
@@ -186,6 +187,11 @@ func (config *Configuration) Flags() []cli.Flag {
 			Value:       "",
 			Usage:       "(*) key to use when accessing via TLS",
 			Destination: &config.SearchTarget.Key,
+		},
+		cli.BoolFlag{
+			Name:        "r,raw",
+			Usage:       "Output raw",
+			Destination: &config.Raw,
 		},
 		cli.BoolFlag{
 			Name:        "f,follow",

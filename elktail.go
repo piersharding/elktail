@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -148,7 +149,7 @@ func NewTail(configuration *configuration.Configuration) *Tail {
 // Selects appropriate indices in EL based on configuration. This basically means that if query is date filtered,
 // then it attempts to select indices in the filtered date range, otherwise it selects the last index.
 func (tail *Tail) selectIndices(configuration *configuration.Configuration) {
-	indices, err := tail.client.IndexNames()
+	result, err := tail.client.CatIndices().Do(context.TODO())
 	if err != nil {
 		Info.Println("Could not fetch available indices. Using pattern instead.", err)
 		tail.indices = []string{configuration.SearchTarget.IndexPattern}
@@ -186,15 +187,21 @@ func (tail *Tail) selectIndices(configuration *configuration.Configuration) {
 
 // Start the tailer
 func (tail *Tail) Start(follow bool, initialEntries int) {
+	os.Stderr.WriteString("in Start\n")
+
 	result, err := tail.initialSearch(initialEntries)
 	if err != nil {
 		Error.Fatalln("Error in executing search query.", err)
 	}
+	os.Stderr.WriteString("in Start 1\n")
 	tail.processResults(result)
 	delay := 500 * time.Millisecond
+	os.Stderr.WriteString("in Start 2\n")
 	for follow {
 		time.Sleep(delay)
 		if tail.lastTimeStamp != "" {
+			os.Stderr.WriteString("in Start 3\n")
+			Info.Printf("Query: %v\n", tail.buildTimestampFilteredQuery())
 			searchRequest := elastic.NewSearchRequest().
 				Sort(tail.queryDefinition.TimestampField, false).
 				From(0).
@@ -206,6 +213,7 @@ func (tail *Tail) Start(follow bool, initialEntries int) {
 				Index(tail.indices...).
 				Add(searchRequest).
 				Do(context.Background())
+			os.Stderr.WriteString("in Start 4\n")
 
 			if multiResult != nil {
 				result = multiResult.Responses[0]
@@ -217,11 +225,14 @@ func (tail *Tail) Start(follow bool, initialEntries int) {
 
 		} else {
 			//if lastTimeStamp is not defined we have to repeat the initial search until we get at least 1 result
+			os.Stderr.WriteString("in Start tail.initialSearch\n")
 			result, err = tail.initialSearch(initialEntries)
+			Info.Printf("Query: %s\n", tail.buildTimestampFilteredQuery())
 		}
 		if err != nil {
 			Error.Fatalln("Error in executing search query.", err)
 		}
+		os.Stderr.WriteString("processResults\n")
 		tail.processResults(result)
 
 		//Dynamic delay calculation for determining delay between search requests
@@ -231,6 +242,9 @@ func (tail *Tail) Start(follow bool, initialEntries int) {
 			delay = delay + 500*time.Millisecond
 		}
 	}
+
+	os.Stderr.WriteString("Start:exiting\n")
+
 }
 
 // Initial search needs to be run until we get at least one result
@@ -318,7 +332,7 @@ func (tail *Tail) processHit(hit *elastic.SearchHit) map[string]interface{} {
 	}
 
 	//if tail.queryDefinition.Raw {
-	fmt.Println(string(*hit.Source))
+	fmt.Println(string(hit.Source))
 	//} else {
 	//	tail.printResult(entry)
 	//}
@@ -449,6 +463,9 @@ func main() {
 		} else {
 			InitLogging(ioutil.Discard, ioutil.Discard, os.Stderr, false)
 		}
+
+		Info.Printf("Started")
+
 		if !configuration.IsConfigRelevantFlagSet(c) {
 			loadedConfig, err := configuration.LoadDefault()
 			if err != nil {
@@ -468,6 +485,8 @@ func main() {
 				}
 			}
 		}
+
+		Info.Printf("After config")
 
 		if config.User != "" {
 			credentials := strings.Split(config.User, ":")
@@ -529,12 +548,19 @@ func main() {
 		}
 
 		tail := NewTail(config)
+
+		Info.Printf("NewTail")
+
 		//If we don't exit here we can save the defaults
 		configToSave.SaveDefault()
+
+		Info.Printf("tail.Start")
 		tail.Start(!config.IsListOnly(), config.InitialEntries)
 	}
 
+	os.Stderr.WriteString("Runnit\n")
 	app.Run(os.Args)
+	os.Stderr.WriteString("After Runnit\n")
 
 }
 
@@ -597,7 +623,7 @@ type KibanaDecorator struct {
 	r             http.RoundTripper
 	kibanaVersion string
 	extraHeaders  map[string]string
-	configuration *Configuration
+	configuration *configuration.Configuration
 	cookie        AuthToken
 }
 
@@ -639,11 +665,25 @@ func (mrt KibanaDecorator) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 type AuthToken struct {
-	config *Configuration
+	config *configuration.Configuration
 	token  string
 }
 
-func LoadToken(config *Configuration) AuthToken {
+func userHomeDir() string {
+	if runtime.GOOS == "windows" {
+		home := os.Getenv("HOMEDRIVE") + os.Getenv("HOMEPATH")
+		if home == "" {
+			home = os.Getenv("USERPROFILE")
+		}
+		return home
+	}
+	return os.Getenv("HOME")
+}
+
+var confDir = ".elktail"
+var defaultConfFile = "default.json"
+
+func LoadToken(config *configuration.Configuration) AuthToken {
 	confDirPath := userHomeDir() + string(os.PathSeparator) + confDir
 	confFile := confDirPath + string(os.PathSeparator) + "auth.cookie"
 	tokenBytes, err := ioutil.ReadFile(confFile)
