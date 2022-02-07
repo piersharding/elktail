@@ -36,6 +36,7 @@ type Tail struct {
 	lastTimeStamp   string                         //timestamp of the last result
 	lastIDs         []displayedEntry               //result IDs that we fetched in the last query, used to avoid duplicates when using tailing query time window
 	order           bool                           //search order - true = ascending (may be reversed in case date-after filtering)
+	raw             bool                           // Raw output
 }
 
 type displayedEntry struct {
@@ -134,6 +135,8 @@ func NewTail(configuration *configuration.Configuration) *Tail {
 
 	tail.queryDefinition = &configuration.QueryDefinition
 
+	tail.raw = configuration.Raw
+
 	tail.indices = []string{configuration.SearchTarget.IndexPattern}
 	//tail.selectIndices(configuration)
 
@@ -187,20 +190,16 @@ func (tail *Tail) selectIndices(configuration *configuration.Configuration) {
 
 // Start the tailer
 func (tail *Tail) Start(follow bool, initialEntries int) {
-	os.Stderr.WriteString("in Start\n")
 
 	result, err := tail.initialSearch(initialEntries)
 	if err != nil {
 		Error.Fatalln("Error in executing search query.", err)
 	}
-	os.Stderr.WriteString("in Start 1\n")
 	tail.processResults(result)
 	delay := 500 * time.Millisecond
-	os.Stderr.WriteString("in Start 2\n")
 	for follow {
 		time.Sleep(delay)
 		if tail.lastTimeStamp != "" {
-			os.Stderr.WriteString("in Start 3\n")
 			Info.Printf("Query: %v\n", tail.buildTimestampFilteredQuery())
 			searchRequest := elastic.NewSearchRequest().
 				Sort(tail.queryDefinition.TimestampField, false).
@@ -213,7 +212,6 @@ func (tail *Tail) Start(follow bool, initialEntries int) {
 				Index(tail.indices...).
 				Add(searchRequest).
 				Do(context.Background())
-			os.Stderr.WriteString("in Start 4\n")
 
 			if multiResult != nil {
 				result = multiResult.Responses[0]
@@ -225,14 +223,12 @@ func (tail *Tail) Start(follow bool, initialEntries int) {
 
 		} else {
 			//if lastTimeStamp is not defined we have to repeat the initial search until we get at least 1 result
-			os.Stderr.WriteString("in Start tail.initialSearch\n")
 			result, err = tail.initialSearch(initialEntries)
 			Info.Printf("Query: %s\n", tail.buildTimestampFilteredQuery())
 		}
 		if err != nil {
 			Error.Fatalln("Error in executing search query.", err)
 		}
-		os.Stderr.WriteString("processResults\n")
 		tail.processResults(result)
 
 		//Dynamic delay calculation for determining delay between search requests
@@ -242,9 +238,6 @@ func (tail *Tail) Start(follow bool, initialEntries int) {
 			delay = delay + 500*time.Millisecond
 		}
 	}
-
-	os.Stderr.WriteString("Start:exiting\n")
-
 }
 
 // Initial search needs to be run until we get at least one result
@@ -264,6 +257,13 @@ func (tail *Tail) initialSearch(initialEntries int) (*elastic.SearchResult, erro
 	} else {
 		return nil, e
 	}
+
+	// return tail.client.Search().
+	// 	Index(tail.indices...).
+	// 	Sort(tail.queryDefinition.TimestampField, tail.order).
+	// 	Query(tail.buildSearchQuery()).
+	// 	From(0).Size(initialEntries).
+	// 	Do(context.Background())
 }
 
 // Process the results (e.g. prints them out based on configured format)
@@ -331,13 +331,27 @@ func (tail *Tail) processHit(hit *elastic.SearchHit) map[string]interface{} {
 		Error.Fatalln("Failed parsing ElasticSearch response.", err)
 	}
 
-	//if tail.queryDefinition.Raw {
-	fmt.Println(string(hit.Source))
-	//} else {
-	//	tail.printResult(entry)
-	//}
+	if tail.raw {
+		fmt.Println(string(hit.Source))
+	} else {
+		tail.printResult(entry)
+	}
 
 	return entry
+}
+
+// Regexp for parsing out format fields
+var formatRegexp = regexp.MustCompile("%[A-Za-z0-9@_.-]+")
+
+// Print result according to format
+func (tail *Tail) printResult(entry map[string]interface{}) {
+	fields := formatRegexp.FindAllString(tail.queryDefinition.Format, -1)
+	result := tail.queryDefinition.Format
+	for _, f := range fields {
+		value, _ := EvaluateExpression(entry, f[1:])
+		result = strings.Replace(result, f, value, -1)
+	}
+	fmt.Println(result)
 }
 
 func (tail *Tail) buildSearchQuery() elastic.Query {
@@ -444,7 +458,7 @@ func main() {
 	config := new(configuration.Configuration)
 	app := cli.NewApp()
 	app.Name = "elktail"
-	app.Usage = "utility for tailing Logstash logs stored in ElasticSearch"
+	app.Usage = "utility for tailing Filebeat logs stored in ElasticSearch"
 	app.HideHelp = true
 	app.Version = VERSION
 	app.ArgsUsage = "[query-string]\n   Options marked with (*) are saved between invocations of the command. Each time you specify an option marked with (*) previously stored settings are erased."
@@ -463,8 +477,6 @@ func main() {
 		} else {
 			InitLogging(ioutil.Discard, ioutil.Discard, os.Stderr, false)
 		}
-
-		Info.Printf("Started")
 
 		if !configuration.IsConfigRelevantFlagSet(c) {
 			loadedConfig, err := configuration.LoadDefault()
@@ -485,8 +497,6 @@ func main() {
 				}
 			}
 		}
-
-		Info.Printf("After config")
 
 		if config.User != "" {
 			credentials := strings.Split(config.User, ":")
@@ -549,19 +559,13 @@ func main() {
 
 		tail := NewTail(config)
 
-		Info.Printf("NewTail")
-
 		//If we don't exit here we can save the defaults
 		configToSave.SaveDefault()
 
-		Info.Printf("tail.Start")
 		tail.Start(!config.IsListOnly(), config.InitialEntries)
 	}
 
-	os.Stderr.WriteString("Runnit\n")
 	app.Run(os.Args)
-	os.Stderr.WriteString("After Runnit\n")
-
 }
 
 // Must is a helper function to avoid boilerplate error handling for regex matches

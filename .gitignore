@@ -19,3 +19,4 @@ release/
 release.sh
 *.swp
 elktail
+cover.out

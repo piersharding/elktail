@@ -1,16 +1,27 @@
-FROM golang:alpine as build
+# Build the manager binary
+FROM golang:1.17 as builder
 
-RUN apk --no-cache add git
+WORKDIR /workspace
+# Copy the Go Modules manifests
+COPY go.mod go.mod
+COPY go.sum go.sum
+# cache deps before building and copying source so that we don't need to re-download as much
+# and so that source changes don't invalidate our downloaded layer
+RUN go mod download
 
-WORKDIR /go/src/app
-COPY . .
+# Copy the go source
+COPY *.go ./
+COPY configuration/ configuration/
 
-RUN go get -d -v ./...
-RUN go install -v ./...
+# Build
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o elktail elktail.go version.go logging.go sshtunnel.go
 
-FROM alpine
+# Use distroless as minimal base image to package the manager binary
+# Refer to https://github.com/GoogleContainerTools/distroless for more details
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /
+COPY --from=builder /workspace/elktail .
+USER 65532:65532
 
-COPY --from=build /go/bin/app /app
-
-ENTRYPOINT ["/app"]
+ENTRYPOINT ["/elktail"]
 CMD ["--raw"]	# because we don't know what fields exist

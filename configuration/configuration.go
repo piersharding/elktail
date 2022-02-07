@@ -33,6 +33,7 @@ type SearchTarget struct {
 
 type QueryDefinition struct {
 	Terms          []string
+	Format         string
 	TimestampField string
 	AfterDateTime  string `json:"-"`
 	BeforeDateTime string `json:"-"`
@@ -57,7 +58,7 @@ var confDir = ".elktail"
 var defaultConfFile = "default.json"
 
 //When changing this array, make sure to also make appropriate changes in CopyConfigRelevantSettingsTo
-var configRelevantFlags = []string{"url", "i", "t", "u", "ssh"}
+var configRelevantFlags = []string{"url", "i", "t", "u", "ssh", "l"}
 
 func userHomeDir() string {
 	if runtime.GOOS == "windows" {
@@ -89,6 +90,7 @@ func (c *Configuration) CopyConfigRelevantSettingsTo(dest *Configuration) {
 	dest.SearchTarget.Cert = c.SearchTarget.Cert
 	dest.SearchTarget.Key = c.SearchTarget.Key
 	dest.SearchTarget.IndexPattern = c.SearchTarget.IndexPattern
+	dest.QueryDefinition.Format = c.QueryDefinition.Format
 	dest.QueryDefinition.Terms = make([]string, len(c.QueryDefinition.Terms))
 	//dest.QueryDefinition.Raw = c.QueryDefinition.Raw
 	copy(dest.QueryDefinition.Terms, c.QueryDefinition.Terms)
@@ -103,6 +105,7 @@ func (c *Configuration) CopyNonConfigRelevantSettingsTo(dest *Configuration) {
 	dest.QueryDefinition.AfterDateTime = c.QueryDefinition.AfterDateTime
 	dest.QueryDefinition.BeforeDateTime = c.QueryDefinition.BeforeDateTime
 	dest.Follow = c.Follow
+	dest.Raw = c.Raw
 	dest.InitialEntries = c.InitialEntries
 	dest.Verbose = c.Verbose
 	dest.MoreVerbose = c.MoreVerbose
@@ -199,8 +202,14 @@ func (config *Configuration) Flags() []cli.Flag {
 			Destination: &config.Follow,
 		},
 		cli.StringFlag{
+			Name:        "l,format",
+			Value:       "%@timestamp :: %message",
+			Usage:       "(*) Message format for the entries - field names are referenced using % sign, for example '%@timestamp %message'",
+			Destination: &config.QueryDefinition.Format,
+		},
+		cli.StringFlag{
 			Name:        "i,index-pattern",
-			Value:       "logstash-[0-9].*",
+			Value:       "filebeat-*",
 			Usage:       "(*) Index pattern - elktail will attempt to tail only the latest of logstash's indexes matched by the pattern",
 			Destination: &config.SearchTarget.IndexPattern,
 		},
@@ -263,6 +272,10 @@ func (config *Configuration) Flags() []cli.Flag {
 		cli.VersionFlag,
 		cli.HelpFlag,
 	}
+}
+
+func (c *Configuration) IsRaw() bool {
+	return c.Raw
 }
 
 //Elktail will work in list-only (no follow) mode if appropriate flag is set or if query has date-time filtering enabled
